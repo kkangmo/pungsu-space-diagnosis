@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "thresholds": {
+    "distances": { "close": 100, "near": 300, "mid": 500, "far": 800 },
+    "mountain": {
+      "maxDistanceM": 500,
+      "minElevationDiffM": 30,
+      "forestMaxDistanceM": 300
+    },
+    "water": { "maxDistanceM": 500, "gradedMaxDistanceM": 800 },
+    "road": {
+      "deadEndMaxM": 50,
+      "railwayMaxDistanceM": 200,
+      "majorRoadTypes": ["motorway", "trunk", "primary", "secondary"]
+    },
+    "facilities": {
+      "cemetery": {
+        "osmTags": ["historic=grave", "landuse=cemetery", "amenity=grave_yard"],
+        "maxDistanceM": 500
+      },
+      "substation": {
+        "osmTags": ["power=substation", "power=generator"],
+        "maxDistanceM": 300
+      },
+      "waste": {
+        "osmTags": ["landuse=landfill", "amenity=waste_plant", "man_made=wastewater_plant"],
+        "maxDistanceM": 500
+      },
+      "tower": {
+        "osmTags": ["man_made=tower", "power=tower", "telecom=data_center"],
+        "maxDistanceM": 100
+      }
+    },
+    "green": { "maxDistanceM": 200, "gradedMaxDistanceM": 500 }
+  },
+  "weights": {
+    "mountain": 0.25,
+    "water": 0.2,
+    "road": 0.15,
+    "facilities": 0.25,
+    "green": 0.15
+  },
+  "grades": { "good": "양호", "normal": "보통", "caution": "주의" },
+  "scoreRange": { "min": 0, "max": 100, "floor": 15, "ceiling": 95 },
+  "vision": {
+    "maxPhotos": 5,
+    "maxBytes": 10485760,
+    "elementWeights": {
+      "shape": 0.2,
+      "entrance": 0.2,
+      "road": 0.15,
+      "surroundings": 0.15,
+      "balance": 0.15,
+      "interior": 0.15
+    }
+  },
+  "suggestions": { "minCount": 1, "maxCount": 3 }
+}
