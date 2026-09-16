@@ -19,7 +19,7 @@ export interface VisionReport {
 }
 
 const GEMINI_URL =
-  "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent";
+  "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent";
 
 // 검출 항목 명세 — 시스템 지시문
 const DETECTION_SPEC = `당신은 한국 전통 풍수(形局)의 지리적 관점을 이미지로 관찰하는 비전 보조자입니다.
@@ -62,43 +62,66 @@ export async function analyzePhotosWithVision(
     });
   }
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 60000);
-  const res = await fetch(`${GEMINI_URL}?key=${apiKey}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [{ parts }],
-      generationConfig: {
-        temperature: 0.4,
-        responseMimeType: "application/json",
-      },
-    }),
-    signal: controller.signal,
-  });
-  clearTimeout(timeout);
+  // Gemini는 일시적 503/429를 반환하는 경우가 있어 1회 재시도
+  let lastErr: unknown = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 90000);
+      const res = await fetch(`${GEMINI_URL}?key=${apiKey}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts }],
+          generationConfig: {
+            temperature: 0.4,
+            responseMimeType: "application/json",
+          },
+        }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`VISION_HTTP_${res.status}: ${text.slice(0, 200)}`);
-  }
+      if (res.status === 503 || res.status === 429) {
+        const text = await res.text().catch(() => "");
+        lastErr = new Error(`VISION_HTTP_${res.status}: ${text.slice(0, 200)}`);
+        if (attempt === 0) {
+          await new Promise((s) => setTimeout(s, 2000));
+          continue;
+        }
+        throw lastErr;
+      }
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(`VISION_HTTP_${res.status}: ${text.slice(0, 200)}`);
+      }
 
-  const json = (await res.json()) as {
-    candidates?: {
-      content?: { parts?: { text?: string }[] };
-      finishReason?: string;
-    }[];
-  };
-  const text = json.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-  if (!text) {
-    return {
-      detections: [],
-      sceneType: "unknown",
-      uninterpretable: true,
-      note: "모델이 응답을 생성하지 못했습니다.",
-    };
+      const json = (await res.json()) as {
+        candidates?: {
+          content?: { parts?: { text?: string }[] };
+          finishReason?: string;
+        }[];
+      };
+      const text = json.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+      if (!text) {
+        return {
+          detections: [],
+          sceneType: "unknown",
+          uninterpretable: true,
+          note: "모델이 응답을 생성하지 못했습니다.",
+        };
+      }
+      return parseReport(text);
+    } catch (e) {
+      lastErr = e;
+      if (attempt === 0) {
+        await new Promise((s) => setTimeout(s, 2000));
+        continue;
+      }
+      throw e;
+    }
   }
-  return parseReport(text);
+  throw lastErr ?? new Error("VISION_FAILED");
 }
 
 function parseReport(text: string): VisionReport {
@@ -108,15 +131,27 @@ function parseReport(text: string): VisionReport {
   if (fence) cleaned = fence[1].trim();
 
   try {
-    const parsed = JSON.parse(cleaned) as Partial<VisionReport>;
-    const detections = (parsed.detections ?? []).filter(
-      (d) => d && d.element && d.observation,
-    );
+    const parsed = JSON.parse(cleaned);
+    // 모델이 여러 장을 받으면 배열을 반환하는 경우가 있음 — 모든 장의
+    // detections를 병합하고, 대표 메타데이터는 첫 번째 보고서에서 취한다
+    const reports: Partial<VisionReport>[] = Array.isArray(parsed) ? parsed : [parsed];
+    const detections = reports
+      .flatMap((r) => r.detections ?? [])
+      .filter((d) => d && d.element && d.observation);
+    if (detections.length === 0) {
+      return {
+        detections: [],
+        sceneType: "unknown",
+        uninterpretable: true,
+        note: "모델이 관찰 항목을 반환하지 않았습니다.",
+      };
+    }
+    const first = reports[0];
     return {
       detections,
-      sceneType: parsed.sceneType ?? "unknown",
-      uninterpretable: Boolean(parsed.uninterpretable),
-      note: parsed.note,
+      sceneType: first?.sceneType ?? "unknown",
+      uninterpretable: reports.every((r) => Boolean(r.uninterpretable)),
+      note: first?.note,
     };
   } catch {
     return {
